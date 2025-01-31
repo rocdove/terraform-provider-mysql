@@ -1,3 +1,3 @@
-ephemeral "scaffolding_example" "example" {
+ephemeral "mysql_example" "example" {
   configurable_attribute = "some-value"
 }
