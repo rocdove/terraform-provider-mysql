@@ -6,7 +6,6 @@ package provider
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"database/sql"
 	"fmt"
 	"log"
@@ -31,13 +30,13 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-// Ensure mysqlProvider satisfies various provider interfaces.
-var _ provider.Provider = &mysqlProvider{}
-var _ provider.ProviderWithFunctions = &mysqlProvider{}
-var _ provider.ProviderWithEphemeralResources = &mysqlProvider{}
+// Ensure MysqlProvider satisfies various provider interfaces.
+var _ provider.Provider = &MysqlProvider{}
+var _ provider.ProviderWithFunctions = &MysqlProvider{}
+var _ provider.ProviderWithEphemeralResources = &MysqlProvider{}
 
-// mysqlProvider defines the provider implementation.
-type mysqlProvider struct {
+// MysqlProvider defines the provider implementation.
+type MysqlProvider struct {
 	// version is set to the provider version on release, "dev" when the
 	// provider is built and ran locally, and "test" when running acceptance
 	// testing.
@@ -69,19 +68,20 @@ type CustomTLS struct {
 	ClientKey  types.String `tfsdk:"client_key"`
 }
 
-// mysqlProviderModel describes the provider data model.
-type mysqlProviderModel struct {
+// MysqlProviderModel describes the provider data model.
+type MysqlProviderModel struct {
 	Endpoint               types.String      `tfsdk:"endpoint"`
 	Username               types.String      `tfsdk:"username"`
 	Password               types.String      `tfsdk:"password"`
+	AuthenticationPlugin   types.String      `tfsdk:"authentication_plugin"`
 	Proxy                  types.String      `tfsdk:"proxy"`
 	TLS                    types.String      `tfsdk:"tls"`
-	CustomTLS              CustomTLS         `tfsdk:"custom_tls"`
 	ConnParams             map[string]string `tfsdk:"conn_params"`
 	MaxConnLifetimeSec     types.Int64       `tfsdk:"max_conn_lifetime_sec"`
 	ConnectRetryTimeoutSec types.Int64       `tfsdk:"connect_retry_timeout_sec"`
 	MaxOpenConns           types.Int64       `tfsdk:"max_open_conns"`
-	AuthenticationPlugin   types.String      `tfsdk:"authentication_plugin"`
+
+	// CustomTLS              CustomTLS         `tfsdk:"custom_tls"`
 }
 
 type OneConnection struct {
@@ -101,12 +101,12 @@ func init() {
 	connectionCache = map[string]*OneConnection{}
 }
 
-func (p *mysqlProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
+func (p *MysqlProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
 	resp.TypeName = "mysql"
 	resp.Version = p.version
 }
 
-func (p *mysqlProvider) Schema(ctx context.Context, req provider.SchemaRequest, resp *provider.SchemaResponse) {
+func (p *MysqlProvider) Schema(ctx context.Context, req provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Attributes: map[string]schema.Attribute{
 			"endpoint": schema.StringAttribute{
@@ -130,33 +130,34 @@ func (p *mysqlProvider) Schema(ctx context.Context, req provider.SchemaRequest, 
 				Description: "TLS for MySQL.",
 				Optional:    true,
 			},
-			"custom_tls": schema.MapNestedAttribute{
-				Description: "conn_params for MySQL.",
-				Optional:    true,
-				NestedObject: schema.NestedAttributeObject{
-					Attributes: map[string]schema.Attribute{
-						"config_key": schema.StringAttribute{
-							Description: "",
-							Optional:    true,
-						},
-						"ca_cert": schema.StringAttribute{
-							Description: "",
-							Optional:    true,
-						},
-						"client_cert": schema.StringAttribute{
-							Description: "",
-							Optional:    true,
-						},
-						"client_key": schema.StringAttribute{
-							Description: "",
-							Optional:    true,
-						},
-					},
-				},
-			},
+			// "custom_tls": schema.MapNestedAttribute{
+			// 	Description: "custom_tls for MySQL.",
+			// 	Optional:    true,
+			// 	NestedObject: schema.NestedAttributeObject{
+			// 		Attributes: map[string]schema.Attribute{
+			// 			"config_key": schema.StringAttribute{
+			// 				Description: "",
+			// 				Optional:    true,
+			// 			},
+			// 			"ca_cert": schema.StringAttribute{
+			// 				Description: "",
+			// 				Optional:    true,
+			// 			},
+			// 			"client_cert": schema.StringAttribute{
+			// 				Description: "",
+			// 				Optional:    true,
+			// 			},
+			// 			"client_key": schema.StringAttribute{
+			// 				Description: "",
+			// 				Optional:    true,
+			// 			},
+			// 		},
+			// 	},
+			// },
 			"conn_params": schema.MapAttribute{
 				Description: "conn_params for MySQL.",
 				Optional:    true,
+				ElementType: types.StringType,
 			},
 			"max_conn_lifetime_sec": schema.Int64Attribute{
 				Description: "Max conn lifetime(sec) for MySQL.",
@@ -178,15 +179,16 @@ func (p *mysqlProvider) Schema(ctx context.Context, req provider.SchemaRequest, 
 	}
 }
 
-func (p *mysqlProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
-	tflog.Info(ctx, "Configuring MySQL client")
+func (p *MysqlProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
+	tflog.Info(ctx, "Configuring MySQL")
 	// Retrieve provider data from configuration
-	var config mysqlProviderModel
+	var config MysqlProviderModel
 	diags := req.Config.Get(ctx, &config)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	tflog.Debug(ctx, fmt.Sprintf("config: %+v", config))
 
 	endpoint := os.Getenv("MYSQL_ENDPOINT")
 	username := os.Getenv("MYSQL_USERNAME")
@@ -209,7 +211,11 @@ func (p *mysqlProvider) Configure(ctx context.Context, req provider.ConfigureReq
 	ctx = tflog.SetField(ctx, "mysql_password", password)
 	ctx = tflog.MaskFieldValuesWithFieldKeys(ctx, "mysql_password")
 
-	var connParams = config.ConnParams
+	proto := "tcp"
+	if len(endpoint) > 0 && endpoint[0] == '/' {
+		proto = "unix"
+	}
+
 	var authPlugin string
 	if !config.AuthenticationPlugin.IsNull() {
 		authPlugin = config.AuthenticationPlugin.ValueString()
@@ -233,64 +239,59 @@ func (p *mysqlProvider) Configure(ctx context.Context, req provider.ConfigureReq
 		tlsConfig = config.TLS.ValueString()
 	}
 	var tlsConfigStruct *tls.Config
-	configKey := "default"
-	if !config.CustomTLS.ConfigKey.IsNull() {
-		configKey = config.CustomTLS.ConfigKey.ValueString()
+	// configKey := "default"
+	// if !config.CustomTLS.ConfigKey.IsNull() {
+	// 	configKey = config.CustomTLS.ConfigKey.ValueString()
 
-		tlsConfigStruct = &tls.Config{}
-		var pem []byte
-		if !config.CustomTLS.CACert.IsNull() {
-			caCert := config.CustomTLS.CACert.ValueString()
-			tflog.Debug(ctx, "Using custom CA cert")
-			rootCertPool := x509.NewCertPool()
-			if strings.HasPrefix(caCert, "-----BEGIN") {
-				pem = []byte(caCert)
-			} else {
-				_pem, err := os.ReadFile(caCert)
-				if err != nil {
-					resp.Diagnostics.AddError("failed to read CA cert", err.Error())
-					return
-				}
-				pem = _pem
-			}
-			if ok := rootCertPool.AppendCertsFromPEM(pem); !ok {
-				resp.Diagnostics.AddError("failed to append pem", string(pem))
-				return
-			}
-			tlsConfigStruct.RootCAs = rootCertPool
-		}
+	// 	tlsConfigStruct = &tls.Config{}
+	// 	var pem []byte
+	// 	if !config.CustomTLS.CACert.IsNull() {
+	// 		caCert := config.CustomTLS.CACert.ValueString()
+	// 		tflog.Debug(ctx, "Using custom CA cert")
+	// 		rootCertPool := x509.NewCertPool()
+	// 		if strings.HasPrefix(caCert, "-----BEGIN") {
+	// 			pem = []byte(caCert)
+	// 		} else {
+	// 			_pem, err := os.ReadFile(caCert)
+	// 			if err != nil {
+	// 				resp.Diagnostics.AddError("failed to read CA cert", err.Error())
+	// 				return
+	// 			}
+	// 			pem = _pem
+	// 		}
+	// 		if ok := rootCertPool.AppendCertsFromPEM(pem); !ok {
+	// 			resp.Diagnostics.AddError("failed to append pem", string(pem))
+	// 			return
+	// 		}
+	// 		tlsConfigStruct.RootCAs = rootCertPool
+	// 	}
 
-		if !config.CustomTLS.ClientCert.IsNull() && !config.CustomTLS.ClientKey.IsNull() {
-			tflog.Debug(ctx, "Using custom ClientCert & ClientKey")
-			clientCert := config.CustomTLS.ClientCert.ValueString()
-			clientKey := config.CustomTLS.ClientKey.ValueString()
-			var cert tls.Certificate
-			var err error
-			if strings.HasPrefix(clientCert, "-----BEGIN") {
-				cert, err = tls.X509KeyPair([]byte(clientCert), []byte(clientKey))
-			} else {
-				cert, err = tls.LoadX509KeyPair(clientCert, clientKey)
-			}
-			if err != nil {
-				resp.Diagnostics.AddError("error loading keypair", err.Error())
-				return
-			}
-			tlsConfigStruct.Certificates = []tls.Certificate{cert}
-		}
+	// 	if !config.CustomTLS.ClientCert.IsNull() && !config.CustomTLS.ClientKey.IsNull() {
+	// 		tflog.Debug(ctx, "Using custom ClientCert & ClientKey")
+	// 		clientCert := config.CustomTLS.ClientCert.ValueString()
+	// 		clientKey := config.CustomTLS.ClientKey.ValueString()
+	// 		var cert tls.Certificate
+	// 		var err error
+	// 		if strings.HasPrefix(clientCert, "-----BEGIN") {
+	// 			cert, err = tls.X509KeyPair([]byte(clientCert), []byte(clientKey))
+	// 		} else {
+	// 			cert, err = tls.LoadX509KeyPair(clientCert, clientKey)
+	// 		}
+	// 		if err != nil {
+	// 			resp.Diagnostics.AddError("error loading keypair", err.Error())
+	// 			return
+	// 		}
+	// 		tlsConfigStruct.Certificates = []tls.Certificate{cert}
+	// 	}
 
-		// Register the config
-		err := mysql.RegisterTLSConfig(configKey, tlsConfigStruct)
-		if err != nil {
-			resp.Diagnostics.AddError("failed registering TLS config", err.Error())
-			return
-		}
-		tlsConfig = configKey
-	}
-
-	proto := "tcp"
-	if len(endpoint) > 0 && endpoint[0] == '/' {
-		proto = "unix"
-	}
+	// 	// Register the config
+	// 	err := mysql.RegisterTLSConfig(configKey, tlsConfigStruct)
+	// 	if err != nil {
+	// 		resp.Diagnostics.AddError("failed registering TLS config", err.Error())
+	// 		return
+	// 	}
+	// 	tlsConfig = configKey
+	// }
 
 	conf := mysql.Config{
 		User:                    username,
@@ -301,7 +302,7 @@ func (p *mysqlProvider) Configure(ctx context.Context, req provider.ConfigureReq
 		AllowNativePasswords:    allowNativePasswords,
 		AllowCleartextPasswords: allowClearTextPasswords,
 		InterpolateParams:       true,
-		Params:                  connParams,
+		Params:                  config.ConnParams,
 	}
 
 	if tlsConfigStruct != nil {
@@ -335,25 +336,26 @@ func (p *mysqlProvider) Configure(ctx context.Context, req provider.ConfigureReq
 	tflog.Info(ctx, "Configured MySQL", map[string]any{"success": true})
 }
 
-func (p *mysqlProvider) Resources(ctx context.Context) []func() resource.Resource {
+func (p *MysqlProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
-		NewExampleResource,
+		NewDatabaseResource,
 	}
 }
 
-func (p *mysqlProvider) EphemeralResources(ctx context.Context) []func() ephemeral.EphemeralResource {
+func (p *MysqlProvider) EphemeralResources(ctx context.Context) []func() ephemeral.EphemeralResource {
 	return []func() ephemeral.EphemeralResource{
 		NewExampleEphemeralResource,
 	}
 }
 
-func (p *mysqlProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
+func (p *MysqlProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
-		NewExampleDataSource,
+		NewDatabasesDataSource,
+		NewTablesDataSource,
 	}
 }
 
-func (p *mysqlProvider) Functions(ctx context.Context) []func() function.Function {
+func (p *MysqlProvider) Functions(ctx context.Context) []func() function.Function {
 	return []func() function.Function{
 		NewExampleFunction,
 	}
@@ -361,7 +363,7 @@ func (p *mysqlProvider) Functions(ctx context.Context) []func() function.Functio
 
 func New(version string) func() provider.Provider {
 	return func() provider.Provider {
-		return &mysqlProvider{
+		return &MysqlProvider{
 			version: version,
 		}
 	}
