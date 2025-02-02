@@ -18,21 +18,33 @@ provider "mysql" {
   }
 }
 
-data "mysql_databases" "databases" {
+resource "mysql_database" "terraform" {
   endpoint = "127.0.0.1:3306"
+  database = "terraform"
+  default_character_set = "utf8mb4"
 }
 
-output "databases" {
-  value = data.mysql_databases.databases.databases
-  # sensitive = true
-}
 
-data "mysql_tables" "tables" {
-  endpoint = "127.0.0.1:3306"
-  database = "mysql"
-}
+# data "mysql_tables" "tables" {
+#   endpoint = "127.0.0.1:3306"
+#   database = "mysql"
+# }
 
-output "tables" {
-  value = data.mysql_tables.tables.tables
-  # sensitive = true
-}
+# output "tables" {
+#   value = data.mysql_tables.tables.tables
+#   # sensitive = true
+# }
+
+# output "database_terraform" {
+#   value = mysql_database.terraform
+# }
+
+
+# data "mysql_databases" "databases" {
+#   endpoint = "127.0.0.1:3306"
+# }
+
+# output "databases" {
+#   value = data.mysql_databases.databases
+#   # sensitive = true
+# }
