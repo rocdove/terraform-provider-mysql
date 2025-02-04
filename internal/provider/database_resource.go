@@ -12,6 +12,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/jinzhu/copier"
@@ -62,6 +64,9 @@ func (r *DatabaseResource) Schema(ctx context.Context, req resource.SchemaReques
 				MarkdownDescription: "endpoint and database create to id(endpoint/database).",
 				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"endpoint": schema.StringAttribute{
 				MarkdownDescription: "Endpoint for MySQL. May also be provided via MYSQL_ENDPOINT environment variable.",
@@ -75,13 +80,13 @@ func (r *DatabaseResource) Schema(ctx context.Context, req resource.SchemaReques
 			"default_character_set": schema.StringAttribute{
 				MarkdownDescription: "default_character_set for the database.",
 				Optional:            true,
-				// Computed:            true,
+				Computed:            true,
 				// Default:             stringdefault.StaticString("utf8mb4"),
 			},
 			"default_collation": schema.StringAttribute{
 				MarkdownDescription: "default_collation for the database.",
 				Optional:            true,
-				// Computed:            true,
+				Computed:            true,
 				// Default:             stringdefault.StaticString("utf8mb4_0900_ai_ci"),
 			},
 		},

@@ -339,6 +339,7 @@ func (p *MysqlProvider) Configure(ctx context.Context, req provider.ConfigureReq
 func (p *MysqlProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewDatabaseResource,
+		NewUserResource,
 	}
 }
 

@@ -24,6 +24,12 @@ resource "mysql_database" "terraform" {
   default_character_set = "utf8mb4"
 }
 
+resource "mysql_user" "terraform" {
+  endpoint = "127.0.0.1:3306"
+  user = "terraform"
+  host = "%"
+  plaintext_password = "My@3306.tf"
+}
 
 # data "mysql_tables" "tables" {
 #   endpoint = "127.0.0.1:3306"
